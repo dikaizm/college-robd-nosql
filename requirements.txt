@@ -1,0 +1,12 @@
+pymongo==4.6.1
+pandas==2.2.0
+python-dateutil==2.8.2
+jupyter==1.0.0
+notebook==7.0.7
+matplotlib==3.8.2
+seaborn==0.13.2
+plotly==5.18.0
+numpy==1.26.4 
+nbformat>=5.7.0
+plotly-express==0.4.1
+plotly-graph-objects==0.0.1
