@@ -226,6 +226,33 @@ def get_combined_analysis(n_longest_routes_neo4j=30000, n_profitable_routes_mong
         st.error(f"Error melakukan analisis gabungan: {e}")
         return pd.DataFrame()
 
+@st.cache_data(ttl=600)
+def get_airport_connections(airport_code):
+    """Mengambil informasi koneksi untuk bandara tertentu."""
+    if not neo4j_driver:
+        return pd.DataFrame()
+    try:
+        def get_connections(tx):
+            query = """
+            MATCH (a:Airport)-[:CONNECTED_TO]-(b:Airport)
+            WHERE a.airport_code = $airport_code
+            RETURN 
+                a.airport_code AS airport,
+                a.city AS city,
+                COUNT(DISTINCT b) AS total_connections
+            ORDER BY total_connections DESC
+            LIMIT 10
+            """
+            return list(tx.run(query, airport_code=airport_code))
+
+        with neo4j_driver.session() as session:
+            results = session.execute_read(get_connections)
+            data = [dict(record) for record in results]
+            return pd.DataFrame(data)
+    except Exception as e:
+        st.error(f"Error mengambil data koneksi bandara: {e}")
+        return pd.DataFrame()
+
 # --- UI Streamlit ---
 #st.set_page_config(layout="wide", page_title="Dashboard Analisis Tiket")
 
@@ -269,6 +296,8 @@ with tab2:
     st.header("Top Rute Terpanjang")
     st.markdown("Menampilkan rute penerbangan terpanjang.")
 
+    # Section 1: Longest Routes
+    st.subheader("1. Rute Terpanjang")
     num_longest_routes = st.slider("Jumlah rute yang ditampilkan:", min_value=5, max_value=50, value=10, key="longest")
 
     if neo4j_driver:
@@ -276,16 +305,56 @@ with tab2:
         if not df_longest.empty:
             st.dataframe(df_longest.style.format({"distance_km": "{:,.2f} km", "flight_time_hr": "{:,.2f} jam"}))
             
-            st.subheader("Visualisasi Total Jarak per Rute")
-            # Grafik jarak
+            st.markdown("#### Visualisasi Total Jarak per Rute")
             chart_data_distance = df_longest.set_index('origin')['distance_km']
             if not chart_data_distance.empty:
                 st.bar_chart(chart_data_distance)
             else:
                 st.write("Tidak ada data untuk ditampilkan di grafik jarak.")
-
         else:
             st.warning("Tidak ada data rute terpanjang yang ditemukan atau koneksi Neo4j gagal.")
+    else:
+        st.error("Koneksi ke Neo4j tidak berhasil. Periksa konfigurasi.")
+
+    # Section 2: Airport Connections
+    st.subheader("2. Analisis Koneksi Bandara")
+    st.markdown("Masukkan kode bandara untuk melihat jumlah koneksi yang tersedia.")
+    
+    # Get list of unique airports from Neo4j for the dropdown
+    if neo4j_driver:
+        def get_airports(tx):
+            query = """
+            MATCH (a:Airport)
+            RETURN DISTINCT a.airport_code AS code, a.city AS city
+            ORDER BY a.airport_code
+            """
+            return list(tx.run(query))
+
+        with neo4j_driver.session() as session:
+            airports = session.execute_read(get_airports)
+            airport_options = {f"{record['code']} - {record['city']}": record['code'] 
+                             for record in airports}
+
+        selected_airport = st.selectbox(
+            "Pilih Bandara:",
+            options=list(airport_options.keys()),
+            format_func=lambda x: x
+        )
+
+        if selected_airport:
+            airport_code = airport_options[selected_airport]
+            df_connections = get_airport_connections(airport_code)
+            
+            if not df_connections.empty:
+                st.markdown(f"#### Koneksi untuk Bandara {airport_code}")
+                st.dataframe(df_connections.style.format({"total_connections": "{:,}"}))
+                
+                # Visualisasi koneksi
+                st.markdown("#### Visualisasi Jumlah Koneksi")
+                chart_data = df_connections.set_index('airport')['total_connections']
+                st.bar_chart(chart_data)
+            else:
+                st.warning(f"Tidak ditemukan data koneksi untuk bandara {airport_code}")
     else:
         st.error("Koneksi ke Neo4j tidak berhasil. Periksa konfigurasi.")
 
